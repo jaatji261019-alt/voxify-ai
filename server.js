@@ -2,51 +2,55 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 const gTTS = require("gtts");
-const ffmpeg = require("fluent-ffmpeg");
+const path = require("path");
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
-function createChunk(text, i) {
+// ===== Create audio =====
+function createAudio(text, filename) {
   return new Promise((resolve, reject) => {
-      const file = `chunk_${i}.mp3`;
-          new gTTS(text, "en").save(file, (err) => {
-                if (err) reject(err);
-                      else resolve(file);
-                          });
-                            });
-                            }
+    const gtts = new gTTS(text, "en");
+    gtts.save(filename, (err) => {
+      if (err) reject(err);
+      else resolve(filename);
+    });
+  });
+}
 
-                            app.post("/tts", async (req, res) => {
-                              try {
-                                  const { chunks } = req.body;
+// ===== TTS API =====
+app.post("/tts", async (req, res) => {
+  try {
+    const { chunks } = req.body;
 
-                                      const files = [];
+    if (!chunks || chunks.length === 0) {
+      return res.status(400).send("No text provided");
+    }
 
-                                          for (let i = 0; i < chunks.length; i++) {
-                                                const file = await createChunk(chunks[i], i);
-                                                      files.push(file);
-                                                          }
+    // 👉 TEMP: only first chunk (stable version)
+    const filePath = path.join(__dirname, "output.mp3");
 
-                                                              fs.writeFileSync("list.txt", files.map(f => `file '${f}'`).join("\n"));
+    await createAudio(chunks[0], filePath);
 
-                                                                  ffmpeg()
-                                                                        .input("list.txt")
-                                                                              .inputOptions(["-f concat", "-safe 0"])
-                                                                                    .outputOptions(["-c copy"])
-                                                                                          .on("end", () => {
-                                                                                                  res.download("output.mp3");
+    res.download(filePath, "voxify.mp3", () => {
+      // cleanup after download
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    });
 
-                                                                                                          files.forEach(f => fs.unlinkSync(f));
-                                                                                                                  fs.unlinkSync("list.txt");
-                                                                                                                        })
-                                                                                                                              .on("error", err => res.status(500).send(err.message))
-                                                                                                                                    .save("output.mp3");
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server error");
+  }
+});
 
-                                                                                                                                      } catch (err) {
-                                                                                                                                          res.status(500).send(err.message);
-                                                                                                                                            }
-                                                                                                                                            });
+// ===== Health check =====
+app.get("/", (req, res) => {
+  res.send("Voxify AI Backend Running 🚀");
+});
 
-                                                                                                                                            app.listen(3000, () => console.log("Server running"));
+app.listen(3000, () => {
+  console.log("🚀 Server running on port 3000");
+});
