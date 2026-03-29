@@ -27,7 +27,7 @@ async function generate() {
 
   const chunks = chunkText(textEl.value);
 
-  const res = await fetch("http://localhost:3000/tts", {
+  const res = await fetch("http:// https://voxify-ai.onrender.com/tts", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
