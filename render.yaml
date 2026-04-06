@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: voxify-ai
+    env: node
+    buildCommand: "npm install"
+    startCommand: "node server.js"
+    plan: free
+    build:
+      aptPackages:
+        - ffmpeg
