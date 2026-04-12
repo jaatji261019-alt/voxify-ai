@@ -1,3 +1,8 @@
+const multer = require("multer");
+const pdfParse = require("pdf-parse");
+
+const upload = multer({ dest: "uploads/" });
+
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
