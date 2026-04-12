@@ -81,3 +81,20 @@ app.post("/tts", async (req, res) => {
 app.listen(3000, () => {
   console.log("Chunk TTS server running");
 });
+
+app.post("/upload-pdf", upload.single("pdf"), async (req, res) => {
+  try {
+    const filePath = req.file.path;
+
+    const dataBuffer = fs.readFileSync(filePath);
+    const data = await pdfParse(dataBuffer);
+
+    fs.unlinkSync(filePath); // delete file
+
+    res.json({ text: data.text });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "PDF read error" });
+  }
+});
