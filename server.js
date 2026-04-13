@@ -104,3 +104,41 @@ app.post("/upload-pdf", upload.single("pdf"), async (req, res) => {
     res.status(500).json({ error: "PDF read error" });
   }
 });
+app.post("/upload-file", upload.single("file"), async (req, res) => {
+  try {
+    const filePath = req.file.path;
+    const fileType = req.file.mimetype;
+
+    let text = "";
+
+    // PDF
+    if (fileType === "application/pdf") {
+      const dataBuffer = fs.readFileSync(filePath);
+      const data = await pdfParse(dataBuffer);
+      text = data.text;
+    }
+
+    // DOCX
+    else if (
+      fileType ===
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) {
+      const result = await mammoth.extractRawText({ path: filePath });
+      text = result.value;
+    }
+
+    // TXT
+    else if (fileType === "text/plain") {
+      text = fs.readFileSync(filePath, "utf-8");
+    }
+
+    fs.unlinkSync(filePath);
+
+    res.json({ text });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "File processing error" });
+  }
+});
+
