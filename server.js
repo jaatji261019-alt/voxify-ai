@@ -1,23 +1,25 @@
+const express = require("express");
+const cors = require("cors");
+const gTTS = require("gtts");
 const multer = require("multer");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
 const fs = require("fs");
-
-const upload = multer({ dest: "uploads/" });
-const multer = require("multer");
-const pdfParse = require("pdf-parse");
-
-const upload = multer({ dest: "uploads/" });
-
-const express = require("express");
-const fs = require("fs");
 const path = require("path");
-const cors = require("cors");
-const gTTS = require("gtts");
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
+
+// 📁 Upload config
+const upload = multer({ dest: "uploads/" });
+
+// 🔥 ROOT ROUTE
+app.get("/", (req, res) => {
+  res.send("Voxify AI Backend Running 🚀");
+});
 
 // 🔥 Split text into chunks
 function splitText(text, maxLength = 200) {
@@ -35,39 +37,36 @@ function splitText(text, maxLength = 200) {
   });
 
   if (current) chunks.push(current);
-
   return chunks;
 }
 
+// 🔊 TEXT → SPEECH
 app.post("/tts", async (req, res) => {
   try {
     const { text, lang } = req.body;
-
     if (!text) return res.status(400).send("No text");
 
     const chunks = splitText(text);
     const files = [];
 
-    // 🔥 Generate each chunk
     for (let i = 0; i < chunks.length; i++) {
       const filePath = path.join(__dirname, `chunk_${i}.mp3`);
-      const gtts = new gTTS(chunks[i], lang || "en");
+      const tts = new gTTS(chunks[i], lang || "en");
 
       await new Promise(resolve => {
-        gtts.save(filePath, resolve);
+        tts.save(filePath, resolve);
       });
 
       files.push(filePath);
     }
 
-    // 🔥 Merge all chunks
     const finalPath = path.join(__dirname, "final.mp3");
     const writeStream = fs.createWriteStream(finalPath);
 
     for (const file of files) {
       const data = fs.readFileSync(file);
       writeStream.write(data);
-      fs.unlinkSync(file); // delete chunk
+      fs.unlinkSync(file);
     }
 
     writeStream.end();
@@ -84,26 +83,7 @@ app.post("/tts", async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log("Chunk TTS server running");
-});
-
-app.post("/upload-pdf", upload.single("pdf"), async (req, res) => {
-  try {
-    const filePath = req.file.path;
-
-    const dataBuffer = fs.readFileSync(filePath);
-    const data = await pdfParse(dataBuffer);
-
-    fs.unlinkSync(filePath); // delete file
-
-    res.json({ text: data.text });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "PDF read error" });
-  }
-});
+// 📄 FILE UPLOAD (PDF / DOCX / TXT)
 app.post("/upload-file", upload.single("file"), async (req, res) => {
   try {
     const filePath = req.file.path;
@@ -132,6 +112,11 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
       text = fs.readFileSync(filePath, "utf-8");
     }
 
+    else {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({ error: "Unsupported file type" });
+    }
+
     fs.unlinkSync(filePath);
 
     res.json({ text });
@@ -142,3 +127,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
   }
 });
 
+// 🚀 START SERVER
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
