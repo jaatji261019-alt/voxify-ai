@@ -1,5 +1,11 @@
 const multer = require("multer");
 const pdfParse = require("pdf-parse");
+const mammoth = require("mammoth");
+const fs = require("fs");
+
+const upload = multer({ dest: "uploads/" });
+const multer = require("multer");
+const pdfParse = require("pdf-parse");
 
 const upload = multer({ dest: "uploads/" });
 
