@@ -2,10 +2,10 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-const gTTS = require("gtts");
 const multer = require("multer");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
+const googleTTS = require("google-tts-api");
 
 const app = express();
 app.use(cors());
@@ -13,12 +13,12 @@ app.use(express.json({ limit: "10mb" }));
 
 const upload = multer({ dest: "uploads/" });
 
-// 🔥 Home route (IMPORTANT)
+// 🏠 Home route
 app.get("/", (req, res) => {
   res.send("Voxify AI Backend Running 🚀");
 });
 
-// 🔥 Split text (unlimited support)
+// 🔥 Split text (Google TTS limit handle)
 function splitText(text, maxLength = 200) {
   const chunks = [];
   for (let i = 0; i < text.length; i += maxLength) {
@@ -27,39 +27,28 @@ function splitText(text, maxLength = 200) {
   return chunks;
 }
 
-// 🔊 TEXT → AUDIO
+// 🔊 TEXT → AUDIO (Google TTS)
 app.post("/tts", async (req, res) => {
   try {
     const { text, lang } = req.body;
+
     if (!text) return res.status(400).send("No text");
 
     const chunks = splitText(text);
-    const files = [];
+    const urls = [];
 
-    for (let i = 0; i < chunks.length; i++) {
-      const filePath = path.join(__dirname, `chunk_${i}.mp3`);
-      const gtts = new gTTS(chunks[i], lang || "en");
-
-      await new Promise(resolve => gtts.save(filePath, resolve));
-      files.push(filePath);
-    }
-
-    const finalPath = path.join(__dirname, "final.mp3");
-    const writeStream = fs.createWriteStream(finalPath);
-
-    for (const file of files) {
-      const data = fs.readFileSync(file);
-      writeStream.write(data);
-      fs.unlinkSync(file);
-    }
-
-    writeStream.end();
-
-    writeStream.on("finish", () => {
-      res.download(finalPath, "voxify.mp3", () => {
-        fs.unlinkSync(finalPath);
+    // 🔥 Create URL for each chunk
+    chunks.forEach(chunk => {
+      const url = googleTTS.getAudioUrl(chunk, {
+        lang: lang || "en",
+        slow: false,
+        host: "https://translate.google.com"
       });
+      urls.push(url);
     });
+
+    // 🔥 Send all URLs
+    res.json({ urls });
 
   } catch (err) {
     console.error(err);
@@ -87,7 +76,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
 
     fs.unlinkSync(filePath);
 
-    res.json({ text }); // 🔥 IMPORTANT
+    res.json({ text });
 
   } catch (err) {
     console.error(err);
@@ -95,5 +84,6 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
   }
 });
 
+// 🚀 START SERVER
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("Server running 🚀"));
