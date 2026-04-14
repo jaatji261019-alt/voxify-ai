@@ -1,46 +1,33 @@
 const express = require("express");
 const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
 const gTTS = require("gtts");
 const multer = require("multer");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
-const fs = require("fs");
-const path = require("path");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
-// 📁 Upload config
 const upload = multer({ dest: "uploads/" });
 
-// 🔥 ROOT ROUTE
+// 🔥 Home route (IMPORTANT)
 app.get("/", (req, res) => {
   res.send("Voxify AI Backend Running 🚀");
 });
 
-// 🔥 Split text into chunks
+// 🔥 Split text (unlimited support)
 function splitText(text, maxLength = 200) {
-  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-  let chunks = [];
-  let current = "";
-
-  sentences.forEach(sentence => {
-    if ((current + sentence).length > maxLength) {
-      chunks.push(current);
-      current = sentence;
-    } else {
-      current += sentence;
-    }
-  });
-
-  if (current) chunks.push(current);
+  const chunks = [];
+  for (let i = 0; i < text.length; i += maxLength) {
+    chunks.push(text.substring(i, i + maxLength));
+  }
   return chunks;
 }
 
-// 🔊 TEXT → SPEECH
+// 🔊 TEXT → AUDIO
 app.post("/tts", async (req, res) => {
   try {
     const { text, lang } = req.body;
@@ -51,12 +38,9 @@ app.post("/tts", async (req, res) => {
 
     for (let i = 0; i < chunks.length; i++) {
       const filePath = path.join(__dirname, `chunk_${i}.mp3`);
-      const tts = new gTTS(chunks[i], lang || "en");
+      const gtts = new gTTS(chunks[i], lang || "en");
 
-      await new Promise(resolve => {
-        tts.save(filePath, resolve);
-      });
-
+      await new Promise(resolve => gtts.save(filePath, resolve));
       files.push(filePath);
     }
 
@@ -79,7 +63,7 @@ app.post("/tts", async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    res.status(500).send("Error processing text");
+    res.status(500).send("TTS Error");
   }
 });
 
@@ -87,47 +71,29 @@ app.post("/tts", async (req, res) => {
 app.post("/upload-file", upload.single("file"), async (req, res) => {
   try {
     const filePath = req.file.path;
-    const fileType = req.file.mimetype;
+    const type = req.file.mimetype;
 
     let text = "";
 
-    // PDF
-    if (fileType === "application/pdf") {
-      const dataBuffer = fs.readFileSync(filePath);
-      const data = await pdfParse(dataBuffer);
+    if (type === "application/pdf") {
+      const data = await pdfParse(fs.readFileSync(filePath));
       text = data.text;
-    }
-
-    // DOCX
-    else if (
-      fileType ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ) {
+    } else if (type.includes("word")) {
       const result = await mammoth.extractRawText({ path: filePath });
       text = result.value;
-    }
-
-    // TXT
-    else if (fileType === "text/plain") {
+    } else if (type === "text/plain") {
       text = fs.readFileSync(filePath, "utf-8");
-    }
-
-    else {
-      fs.unlinkSync(filePath);
-      return res.status(400).json({ error: "Unsupported file type" });
     }
 
     fs.unlinkSync(filePath);
 
-    res.json({ text });
+    res.json({ text }); // 🔥 IMPORTANT
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "File processing error" });
+    res.status(500).json({ error: "File error" });
   }
 });
 
-// 🚀 START SERVER
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Server running 🚀"));
