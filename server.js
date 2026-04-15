@@ -28,10 +28,9 @@ function splitText(text, maxLength = 200) {
   return chunks;
 }
 
-// 📊 🔥 PROGRESS API (SSE)
+// 📊 PROGRESS API (SSE)
 app.get("/tts-progress", async (req, res) => {
   const text = req.query.text;
-  const lang = req.query.lang || "en";
 
   if (!text) return res.end();
 
@@ -44,18 +43,17 @@ app.get("/tts-progress", async (req, res) => {
   for (let i = 0; i < chunks.length; i++) {
     const percent = Math.round(((i + 1) / chunks.length) * 100);
 
-    // 🔥 SEND %
     res.write(`data: ${percent}\n\n`);
 
-    // 🔥 REALISTIC DELAY (simulate processing)
-    await new Promise(r => setTimeout(r, 300));
+    // small delay for smooth progress
+    await new Promise(r => setTimeout(r, 200));
   }
 
   res.write(`data: done\n\n`);
   res.end();
 });
 
-// 🔊 TEXT → AUDIO (UNLIMITED + MERGE)
+// 🔊 TEXT → AUDIO (FINAL FIXED)
 app.post("/tts", async (req, res) => {
   try {
     const { text, lang } = req.body;
@@ -65,7 +63,7 @@ app.post("/tts", async (req, res) => {
     const chunks = splitText(text);
     const files = [];
 
-    // 🔥 GENERATE CHUNKS
+    // 🔥 STEP 1: CREATE CHUNKS AUDIO
     for (let i = 0; i < chunks.length; i++) {
       const url = googleTTS.getAudioUrl(chunks[i], {
         lang: lang || "en",
@@ -85,7 +83,7 @@ app.post("/tts", async (req, res) => {
       files.push(filePath);
     }
 
-    // 🔥 MERGE AUDIO
+    // 🔥 STEP 2: MERGE AUDIO
     const finalPath = path.join(__dirname, `final_${Date.now()}.mp3`);
     const writeStream = fs.createWriteStream(finalPath);
 
@@ -97,9 +95,17 @@ app.post("/tts", async (req, res) => {
 
     writeStream.end();
 
-    // 🔥 SEND FINAL AUDIO
+    // 🔥 STEP 3: STREAM AUDIO (FIXED)
     writeStream.on("finish", () => {
-      res.download(finalPath, "voxify.mp3", () => {
+      res.set({
+        "Content-Type": "audio/mpeg",
+        "Content-Disposition": "inline; filename=voxify.mp3"
+      });
+
+      const stream = fs.createReadStream(finalPath);
+      stream.pipe(res);
+
+      stream.on("end", () => {
         fs.unlinkSync(finalPath);
       });
     });
@@ -141,7 +147,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
   }
 });
 
-// 🚀 START
+// 🚀 START SERVER
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Server running on port " + PORT);
