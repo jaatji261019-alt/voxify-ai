@@ -19,7 +19,7 @@ app.get("/", (req, res) => {
   res.send("Voxify AI Backend Running 🚀");
 });
 
-// 🔥 SPLIT TEXT (UNLIMITED SUPPORT)
+// 🔥 SPLIT TEXT
 function splitText(text, maxLength = 200) {
   const chunks = [];
   for (let i = 0; i < text.length; i += maxLength) {
@@ -27,6 +27,33 @@ function splitText(text, maxLength = 200) {
   }
   return chunks;
 }
+
+// 📊 🔥 PROGRESS API (SSE)
+app.get("/tts-progress", async (req, res) => {
+  const text = req.query.text;
+  const lang = req.query.lang || "en";
+
+  if (!text) return res.end();
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  const chunks = splitText(text);
+
+  for (let i = 0; i < chunks.length; i++) {
+    const percent = Math.round(((i + 1) / chunks.length) * 100);
+
+    // 🔥 SEND %
+    res.write(`data: ${percent}\n\n`);
+
+    // 🔥 REALISTIC DELAY (simulate processing)
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  res.write(`data: done\n\n`);
+  res.end();
+});
 
 // 🔊 TEXT → AUDIO (UNLIMITED + MERGE)
 app.post("/tts", async (req, res) => {
@@ -38,7 +65,7 @@ app.post("/tts", async (req, res) => {
     const chunks = splitText(text);
     const files = [];
 
-    // 🔥 STEP 1: GENERATE AUDIO CHUNKS
+    // 🔥 GENERATE CHUNKS
     for (let i = 0; i < chunks.length; i++) {
       const url = googleTTS.getAudioUrl(chunks[i], {
         lang: lang || "en",
@@ -58,19 +85,19 @@ app.post("/tts", async (req, res) => {
       files.push(filePath);
     }
 
-    // 🔥 STEP 2: MERGE ALL FILES
+    // 🔥 MERGE AUDIO
     const finalPath = path.join(__dirname, `final_${Date.now()}.mp3`);
     const writeStream = fs.createWriteStream(finalPath);
 
     for (const file of files) {
       const data = fs.readFileSync(file);
       writeStream.write(data);
-      fs.unlinkSync(file); // delete chunk
+      fs.unlinkSync(file);
     }
 
     writeStream.end();
 
-    // 🔥 STEP 3: SEND FINAL AUDIO
+    // 🔥 SEND FINAL AUDIO
     writeStream.on("finish", () => {
       res.download(finalPath, "voxify.mp3", () => {
         fs.unlinkSync(finalPath);
@@ -83,7 +110,7 @@ app.post("/tts", async (req, res) => {
   }
 });
 
-// 📄 FILE UPLOAD (PDF / DOCX / TXT)
+// 📄 FILE UPLOAD
 app.post("/upload-file", upload.single("file"), async (req, res) => {
   try {
     const filePath = req.file.path;
@@ -114,7 +141,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
   }
 });
 
-// 🚀 START SERVER
+// 🚀 START
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Server running on port " + PORT);
