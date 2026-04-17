@@ -5,8 +5,6 @@ const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
 const googleTTS = require("google-tts-api");
 const axios = require("axios");
-const fs = require("fs");
-const path = require("path");
 
 const app = express();
 app.use(cors());
@@ -28,10 +26,9 @@ function splitText(text, maxLength = 200) {
   return chunks;
 }
 
-// 📊 PROGRESS API (SSE)
+// 📊 PROGRESS API
 app.get("/tts-progress", async (req, res) => {
   const text = req.query.text;
-
   if (!text) return res.end();
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -42,18 +39,15 @@ app.get("/tts-progress", async (req, res) => {
 
   for (let i = 0; i < chunks.length; i++) {
     const percent = Math.round(((i + 1) / chunks.length) * 100);
-
     res.write(`data: ${percent}\n\n`);
-
-    // small delay for smooth progress
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 150));
   }
 
   res.write(`data: done\n\n`);
   res.end();
 });
 
-// 🔊 TEXT → AUDIO (FINAL FIXED)
+// 🔊 TEXT → AUDIO (🔥 FIXED STREAM VERSION)
 app.post("/tts", async (req, res) => {
   try {
     const { text, lang } = req.body;
@@ -61,9 +55,12 @@ app.post("/tts", async (req, res) => {
     if (!text) return res.status(400).send("No text");
 
     const chunks = splitText(text);
-    const files = [];
 
-    // 🔥 STEP 1: CREATE CHUNKS AUDIO
+    res.set({
+      "Content-Type": "audio/mpeg"
+    });
+
+    // 🔥 STREAM ALL CHUNKS ONE BY ONE
     for (let i = 0; i < chunks.length; i++) {
       const url = googleTTS.getAudioUrl(chunks[i], {
         lang: lang || "en",
@@ -71,47 +68,19 @@ app.post("/tts", async (req, res) => {
         host: "https://translate.google.com"
       });
 
-      const filePath = path.join(__dirname, `chunk_${Date.now()}_${i}.mp3`);
-
       const response = await axios({
         url,
         method: "GET",
         responseType: "arraybuffer"
       });
 
-      fs.writeFileSync(filePath, response.data);
-      files.push(filePath);
+      res.write(response.data); // 🔥 directly stream
     }
 
-    // 🔥 STEP 2: MERGE AUDIO
-    const finalPath = path.join(__dirname, `final_${Date.now()}.mp3`);
-    const writeStream = fs.createWriteStream(finalPath);
-
-    for (const file of files) {
-      const data = fs.readFileSync(file);
-      writeStream.write(data);
-      fs.unlinkSync(file);
-    }
-
-    writeStream.end();
-
-    // 🔥 STEP 3: STREAM AUDIO (FIXED)
-    writeStream.on("finish", () => {
-      res.set({
-        "Content-Type": "audio/mpeg",
-        "Content-Disposition": "inline; filename=voxify.mp3"
-      });
-
-      const stream = fs.createReadStream(finalPath);
-      stream.pipe(res);
-
-      stream.on("end", () => {
-        fs.unlinkSync(finalPath);
-      });
-    });
+    res.end();
 
   } catch (err) {
-    console.error("TTS ERROR:", err);
+    console.error("TTS ERROR:", err.message);
     res.status(500).send("TTS Error");
   }
 });
@@ -119,6 +88,7 @@ app.post("/tts", async (req, res) => {
 // 📄 FILE UPLOAD
 app.post("/upload-file", upload.single("file"), async (req, res) => {
   try {
+    const fs = require("fs");
     const filePath = req.file.path;
     const type = req.file.mimetype;
 
@@ -138,7 +108,6 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
     }
 
     fs.unlinkSync(filePath);
-
     res.json({ text });
 
   } catch (err) {
@@ -147,7 +116,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
   }
 });
 
-// 🚀 START SERVER
+// 🚀 START
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Server running on port " + PORT);
