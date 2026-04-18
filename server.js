@@ -8,7 +8,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 
-// 🎬 FFmpeg
+// 🎬 FFmpeg setup
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -24,7 +24,7 @@ app.get("/", (req, res) => {
   res.send("Voxify AI Backend Running 🚀");
 });
 
-// 🔥 SPLIT TEXT
+// 🔥 TEXT SPLIT
 function splitText(text, maxLength = 200) {
   const chunks = [];
   for (let i = 0; i < text.length; i += maxLength) {
@@ -33,7 +33,9 @@ function splitText(text, maxLength = 200) {
   return chunks;
 }
 
+//
 // 📊 PROGRESS API (SSE)
+//
 app.get("/tts-progress", async (req, res) => {
   const text = req.query.text;
   if (!text) return res.end();
@@ -47,14 +49,16 @@ app.get("/tts-progress", async (req, res) => {
   for (let i = 0; i < chunks.length; i++) {
     const percent = Math.round(((i + 1) / chunks.length) * 100);
     res.write(`data: ${percent}\n\n`);
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise(r => setTimeout(r, 120));
   }
 
   res.write(`data: done\n\n`);
   res.end();
 });
 
-// 🔊 TEXT → AUDIO (STREAM FIXED)
+//
+// 🔊 TEXT → AUDIO (BEST STREAM VERSION)
+//
 app.post("/tts", async (req, res) => {
   try {
     const { text, lang } = req.body;
@@ -62,22 +66,20 @@ app.post("/tts", async (req, res) => {
 
     const chunks = splitText(text);
 
-    res.set({ "Content-Type": "audio/mpeg" });
+    res.setHeader("Content-Type", "audio/mpeg");
 
-    for (let chunk of chunks) {
+    for (const chunk of chunks) {
       const url = googleTTS.getAudioUrl(chunk, {
         lang: lang || "en",
         slow: false,
         host: "https://translate.google.com"
       });
 
-      const response = await axios({
-        url,
-        method: "GET",
+      const audio = await axios.get(url, {
         responseType: "arraybuffer"
       });
 
-      res.write(response.data);
+      res.write(audio.data); // 🔥 direct stream
     }
 
     res.end();
@@ -88,7 +90,9 @@ app.post("/tts", async (req, res) => {
   }
 });
 
+//
 // 📄 FILE UPLOAD
+//
 app.post("/upload-file", upload.single("file"), async (req, res) => {
   try {
     const filePath = req.file.path;
@@ -106,7 +110,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
       text = fs.readFileSync(filePath, "utf-8");
     } else {
       fs.unlinkSync(filePath);
-      return res.status(400).json({ error: "Unsupported file type" });
+      return res.status(400).json({ error: "Unsupported file" });
     }
 
     fs.unlinkSync(filePath);
@@ -114,11 +118,13 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "File processing error" });
+    res.status(500).json({ error: "File error" });
   }
 });
 
-// 🎬 MP4 VIDEO GENERATOR (AI BACKGROUND)
+//
+// 🎬 VIDEO GENERATOR (FIXED + SAFE)
+//
 app.post("/create-video", async (req, res) => {
   try {
     const { audioUrl } = req.body;
@@ -127,7 +133,7 @@ app.post("/create-video", async (req, res) => {
     const audioPath = path.join(__dirname, `audio_${Date.now()}.mp3`);
     const videoPath = path.join(__dirname, `video_${Date.now()}.mp4`);
 
-    // 🔽 download audio
+    // 🔽 Download audio
     const audioRes = await axios({
       url: audioUrl,
       method: "GET",
@@ -136,12 +142,12 @@ app.post("/create-video", async (req, res) => {
 
     fs.writeFileSync(audioPath, audioRes.data);
 
-    // 🎨 AI Background (random image)
-    const bgUrl = "https://picsum.photos/720/1280?random=" + Math.random();
+    // 🎨 Random background
+    const bgUrl = `https://picsum.photos/720/1280?random=${Date.now()}`;
 
     ffmpeg()
       .input(bgUrl)
-      .loop(10) // duration
+      .loop(10)
       .input(audioPath)
       .videoCodec("libx264")
       .audioCodec("aac")
@@ -150,17 +156,17 @@ app.post("/create-video", async (req, res) => {
         "-pix_fmt yuv420p",
         "-shortest"
       ])
-      .save(videoPath)
       .on("end", () => {
         res.download(videoPath, "voxify.mp4", () => {
-          fs.unlinkSync(audioPath);
-          fs.unlinkSync(videoPath);
+          if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+          if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
         });
       })
       .on("error", (err) => {
-        console.error("FFmpeg Error:", err);
+        console.error("FFmpeg ERROR:", err);
         res.status(500).send("Video error");
-      });
+      })
+      .save(videoPath);
 
   } catch (err) {
     console.error(err);
@@ -168,7 +174,9 @@ app.post("/create-video", async (req, res) => {
   }
 });
 
+//
 // 🚀 START SERVER
+//
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Server running on port " + PORT);
