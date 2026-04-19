@@ -1,8 +1,4 @@
-const ffmpeg = require("fluent-ffmpeg");
-const ffmpegPath = require("ffmpeg-static");
-const fetch = require("node-fetch");
-
-ffmpeg.setFfmpegPath(ffmpegPath);
+// ================= IMPORTS =================
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
@@ -13,23 +9,24 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 
-// 🎬 FFmpeg setup
+// 🎬 FFmpeg
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
 ffmpeg.setFfmpegPath(ffmpegPath);
 
+// ================= APP =================
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 
 const upload = multer({ dest: "uploads/" });
 
-// 🏠 HOME
+// ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("Voxify AI Backend Running 🚀");
+  res.send("🚀 Voxify AI Backend Running");
 });
 
-// 🔥 TEXT SPLIT
+// ================= TEXT SPLIT =================
 function splitText(text, maxLength = 200) {
   const chunks = [];
   for (let i = 0; i < text.length; i += maxLength) {
@@ -38,9 +35,14 @@ function splitText(text, maxLength = 200) {
   return chunks;
 }
 
-//
-// 📊 PROGRESS API (SSE)
-//
+// ================= AI IMAGE =================
+function getAIImage(prompt) {
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(
+    prompt + " cinematic lighting ultra realistic 4k"
+  )}`;
+}
+
+// ================= PROGRESS API =================
 app.get("/tts-progress", async (req, res) => {
   const text = req.query.text;
   if (!text) return res.end();
@@ -61,9 +63,7 @@ app.get("/tts-progress", async (req, res) => {
   res.end();
 });
 
-//
-// 🔊 TEXT → AUDIO (BEST STREAM VERSION)
-//
+// ================= TEXT → AUDIO =================
 app.post("/tts", async (req, res) => {
   try {
     const { text, lang } = req.body;
@@ -84,7 +84,7 @@ app.post("/tts", async (req, res) => {
         responseType: "arraybuffer"
       });
 
-      res.write(audio.data); // 🔥 direct stream
+      res.write(audio.data);
     }
 
     res.end();
@@ -95,9 +95,7 @@ app.post("/tts", async (req, res) => {
   }
 });
 
-//
-// 📄 FILE UPLOAD
-//
+// ================= FILE UPLOAD =================
 app.post("/upload-file", upload.single("file"), async (req, res) => {
   try {
     const filePath = req.file.path;
@@ -127,9 +125,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
   }
 });
 
-//
-// 🎬 VIDEO GENERATOR (FIXED + SAFE)
-//
+// ================= BASIC VIDEO =================
 app.post("/create-video", async (req, res) => {
   try {
     const { audioUrl } = req.body;
@@ -138,7 +134,7 @@ app.post("/create-video", async (req, res) => {
     const audioPath = path.join(__dirname, `audio_${Date.now()}.mp3`);
     const videoPath = path.join(__dirname, `video_${Date.now()}.mp4`);
 
-    // 🔽 Download audio
+    // download audio
     const audioRes = await axios({
       url: audioUrl,
       method: "GET",
@@ -147,7 +143,6 @@ app.post("/create-video", async (req, res) => {
 
     fs.writeFileSync(audioPath, audioRes.data);
 
-    // 🎨 Random background
     const bgUrl = `https://picsum.photos/720/1280?random=${Date.now()}`;
 
     ffmpeg()
@@ -157,21 +152,17 @@ app.post("/create-video", async (req, res) => {
       .videoCodec("libx264")
       .audioCodec("aac")
       .size("720x1280")
-      .outputOptions([
-        "-pix_fmt yuv420p",
-        "-shortest"
-      ])
+      .outputOptions(["-pix_fmt yuv420p", "-shortest"])
+      .save(videoPath)
       .on("end", () => {
-        res.download(videoPath, "voxify.mp4", () => {
-          if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-          if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+        res.download(videoPath, "basic.mp4", () => {
+          cleanup(audioPath, videoPath);
         });
       })
-      .on("error", (err) => {
-        console.error("FFmpeg ERROR:", err);
+      .on("error", err => {
+        console.error(err);
         res.status(500).send("Video error");
-      })
-      .save(videoPath);
+      });
 
   } catch (err) {
     console.error(err);
@@ -179,10 +170,67 @@ app.post("/create-video", async (req, res) => {
   }
 });
 
-//
-// 🚀 START SERVER
-//
+// ================= 🎬 CINEMATIC VIDEO =================
+app.post("/cinematic-video", async (req, res) => {
+  try {
+    const { text, audioUrl } = req.body;
+    if (!text || !audioUrl) {
+      return res.status(400).send("Missing data");
+    }
+
+    const sentences = text.split(".").filter(s => s.trim());
+
+    const audioPath = path.join(__dirname, `audio_${Date.now()}.mp3`);
+    const videoPath = path.join(__dirname, `cinematic_${Date.now()}.mp4`);
+
+    // download audio
+    const audioRes = await axios({
+      url: audioUrl,
+      method: "GET",
+      responseType: "arraybuffer"
+    });
+
+    fs.writeFileSync(audioPath, audioRes.data);
+
+    const command = ffmpeg();
+
+    // 🎬 MULTIPLE SCENES
+    for (let sentence of sentences) {
+      const img = getAIImage(sentence);
+      command.input(img).loop(3); // 3 sec per scene
+    }
+
+    command
+      .input(audioPath)
+      .videoCodec("libx264")
+      .audioCodec("aac")
+      .size("720x1280")
+      .outputOptions(["-pix_fmt yuv420p", "-shortest"])
+      .save(videoPath)
+      .on("end", () => {
+        res.download(videoPath, "cinematic.mp4", () => {
+          cleanup(audioPath, videoPath);
+        });
+      })
+      .on("error", err => {
+        console.error("FFmpeg error:", err);
+        res.status(500).send("Cinematic error");
+      });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server error");
+  }
+});
+
+// ================= CLEANUP =================
+function cleanup(audio, video) {
+  if (fs.existsSync(audio)) fs.unlinkSync(audio);
+  if (fs.existsSync(video)) fs.unlinkSync(video);
+}
+
+// ================= START =================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
+  console.log("🔥 Server running on port " + PORT);
 });
