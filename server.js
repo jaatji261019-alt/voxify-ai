@@ -23,7 +23,7 @@ const upload = multer({ dest: "uploads/" });
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("🚀 Voxify AI Backend Running");
+  res.send("🚀 Voxify AI Cinematic Backend Running");
 });
 
 // ================= TEXT SPLIT =================
@@ -36,13 +36,24 @@ function splitText(text, maxLength = 200) {
 }
 
 // ================= AI IMAGE =================
-function getAIImage(prompt) {
-  return `https://image.pollinations.ai/prompt/${encodeURIComponent(
+async function downloadImage(prompt, index) {
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
     prompt + " cinematic lighting ultra realistic 4k"
   )}`;
+
+  const imgPath = path.join(__dirname, `scene_${index}_${Date.now()}.jpg`);
+
+  const res = await axios({
+    url,
+    method: "GET",
+    responseType: "arraybuffer"
+  });
+
+  fs.writeFileSync(imgPath, res.data);
+  return imgPath;
 }
 
-// ================= PROGRESS API =================
+// ================= PROGRESS =================
 app.get("/tts-progress", async (req, res) => {
   const text = req.query.text;
   if (!text) return res.end();
@@ -63,14 +74,13 @@ app.get("/tts-progress", async (req, res) => {
   res.end();
 });
 
-// ================= TEXT → AUDIO =================
+// ================= TTS =================
 app.post("/tts", async (req, res) => {
   try {
     const { text, lang } = req.body;
     if (!text) return res.status(400).send("No text");
 
     const chunks = splitText(text);
-
     res.setHeader("Content-Type", "audio/mpeg");
 
     for (const chunk of chunks) {
@@ -90,7 +100,7 @@ app.post("/tts", async (req, res) => {
     res.end();
 
   } catch (err) {
-    console.error("TTS ERROR:", err.message);
+    console.error(err);
     res.status(500).send("TTS Error");
   }
 });
@@ -125,97 +135,67 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
   }
 });
 
-// ================= BASIC VIDEO =================
-app.post("/create-video", async (req, res) => {
-  try {
-    const { audioUrl } = req.body;
-    if (!audioUrl) return res.status(400).send("No audio");
-
-    const audioPath = path.join(__dirname, `audio_${Date.now()}.mp3`);
-    const videoPath = path.join(__dirname, `video_${Date.now()}.mp4`);
-
-    // download audio
-    const audioRes = await axios({
-      url: audioUrl,
-      method: "GET",
-      responseType: "arraybuffer"
-    });
-
-    fs.writeFileSync(audioPath, audioRes.data);
-
-    const bgUrl = `https://picsum.photos/720/1280?random=${Date.now()}`;
-
-    ffmpeg()
-      .input(bgUrl)
-      .loop(10)
-      .input(audioPath)
-      .videoCodec("libx264")
-      .audioCodec("aac")
-      .size("720x1280")
-      .outputOptions(["-pix_fmt yuv420p", "-shortest"])
-      .save(videoPath)
-      .on("end", () => {
-        res.download(videoPath, "basic.mp4", () => {
-          cleanup(audioPath, videoPath);
-        });
-      })
-      .on("error", err => {
-        console.error(err);
-        res.status(500).send("Video error");
-      });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Server error");
-  }
-});
-
 // ================= 🎬 CINEMATIC VIDEO =================
 app.post("/cinematic-video", async (req, res) => {
   try {
-    const { text, audioUrl } = req.body;
-    if (!text || !audioUrl) {
-      return res.status(400).send("Missing data");
-    }
+    const { text } = req.body;
+    if (!text) return res.status(400).send("No text");
 
-    const sentences = text.split(".").filter(s => s.trim());
+    const sentences = text.split(".").filter(s => s.trim()).slice(0, 5);
 
     const audioPath = path.join(__dirname, `audio_${Date.now()}.mp3`);
     const videoPath = path.join(__dirname, `cinematic_${Date.now()}.mp4`);
 
-    // download audio
+    // 🔊 AUDIO
+    const ttsUrl = googleTTS.getAudioUrl(text, {
+      lang: "en",
+      slow: false,
+      host: "https://translate.google.com"
+    });
+
     const audioRes = await axios({
-      url: audioUrl,
+      url: ttsUrl,
       method: "GET",
       responseType: "arraybuffer"
     });
 
     fs.writeFileSync(audioPath, audioRes.data);
 
+    // 🖼️ IMAGES
+    let images = [];
+    for (let i = 0; i < sentences.length; i++) {
+      const img = await downloadImage(sentences[i], i);
+      images.push(img);
+    }
+
+    // 🎬 FFmpeg
     const command = ffmpeg();
 
-    // 🎬 MULTIPLE SCENES
-    for (let sentence of sentences) {
-      const img = getAIImage(sentence);
-      command.input(img).loop(3); // 3 sec per scene
-    }
+    images.forEach(img => {
+      command.input(img).inputOptions(["-loop 1", "-t 4"]);
+    });
 
     command
       .input(audioPath)
       .videoCodec("libx264")
       .audioCodec("aac")
       .size("720x1280")
-      .outputOptions(["-pix_fmt yuv420p", "-shortest"])
-      .save(videoPath)
+      .outputOptions([
+        "-pix_fmt yuv420p",
+        "-shortest",
+        "-vf",
+        "zoompan=z='min(zoom+0.003,1.5)':d=125,fade=t=in:st=0:d=1"
+      ])
       .on("end", () => {
         res.download(videoPath, "cinematic.mp4", () => {
-          cleanup(audioPath, videoPath);
+          cleanup(audioPath, videoPath, images);
         });
       })
       .on("error", err => {
         console.error("FFmpeg error:", err);
-        res.status(500).send("Cinematic error");
-      });
+        res.status(500).send("Video error");
+      })
+      .save(videoPath);
 
   } catch (err) {
     console.error(err);
@@ -224,9 +204,12 @@ app.post("/cinematic-video", async (req, res) => {
 });
 
 // ================= CLEANUP =================
-function cleanup(audio, video) {
+function cleanup(audio, video, images = []) {
   if (fs.existsSync(audio)) fs.unlinkSync(audio);
   if (fs.existsSync(video)) fs.unlinkSync(video);
+  images.forEach(img => {
+    if (fs.existsSync(img)) fs.unlinkSync(img);
+  });
 }
 
 // ================= START =================
