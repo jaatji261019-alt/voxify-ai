@@ -1,3 +1,8 @@
+const ffmpeg = require("fluent-ffmpeg");
+const ffmpegPath = require("ffmpeg-static");
+const fetch = require("node-fetch");
+
+ffmpeg.setFfmpegPath(ffmpegPath);
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
