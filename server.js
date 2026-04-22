@@ -17,7 +17,7 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 // ================= APP =================
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: "50mb" }));
 
 const upload = multer({ dest: "uploads/" });
 
@@ -53,27 +53,6 @@ async function downloadImage(prompt, index) {
   return imgPath;
 }
 
-// ================= PROGRESS =================
-app.get("/tts-progress", async (req, res) => {
-  const text = req.query.text;
-  if (!text) return res.end();
-
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-
-  const chunks = splitText(text);
-
-  for (let i = 0; i < chunks.length; i++) {
-    const percent = Math.round(((i + 1) / chunks.length) * 100);
-    res.write(`data: ${percent}\n\n`);
-    await new Promise(r => setTimeout(r, 120));
-  }
-
-  res.write(`data: done\n\n`);
-  res.end();
-});
-
 // ================= TTS =================
 app.post("/tts", async (req, res) => {
   try {
@@ -81,13 +60,13 @@ app.post("/tts", async (req, res) => {
     if (!text) return res.status(400).send("No text");
 
     const chunks = splitText(text);
+
     res.setHeader("Content-Type", "audio/mpeg");
 
     for (const chunk of chunks) {
       const url = googleTTS.getAudioUrl(chunk, {
         lang: lang || "en",
         slow: false,
-        host: "https://translate.google.com"
       });
 
       const audio = await axios.get(url, {
@@ -141,16 +120,15 @@ app.post("/cinematic-video", async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).send("No text");
 
-    const sentences = text.split(".").filter(s => s.trim()).slice(0, 5);
+    const sentences = text.split(".").filter(s => s.trim()).slice(0, 4);
 
     const audioPath = path.join(__dirname, `audio_${Date.now()}.mp3`);
-    const videoPath = path.join(__dirname, `cinematic_${Date.now()}.mp4`);
+    const videoPath = path.join(__dirname, `video_${Date.now()}.mp4`);
 
-    // 🔊 AUDIO
+    // 🔊 AUDIO GENERATE
     const ttsUrl = googleTTS.getAudioUrl(text, {
       lang: "en",
       slow: false,
-      host: "https://translate.google.com"
     });
 
     const audioRes = await axios({
@@ -168,11 +146,11 @@ app.post("/cinematic-video", async (req, res) => {
       images.push(img);
     }
 
-    // 🎬 FFmpeg
+    // 🎬 CREATE VIDEO
     const command = ffmpeg();
 
     images.forEach(img => {
-      command.input(img).inputOptions(["-loop 1", "-t 4"]);
+      command.input(img).inputOptions(["-loop 1", "-t 3"]);
     });
 
     command
@@ -182,16 +160,14 @@ app.post("/cinematic-video", async (req, res) => {
       .size("720x1280")
       .outputOptions([
         "-pix_fmt yuv420p",
-        "-shortest",
-        "-vf",
-        "zoompan=z='min(zoom+0.003,1.5)':d=125,fade=t=in:st=0:d=1"
+        "-shortest"
       ])
       .on("end", () => {
         res.download(videoPath, "cinematic.mp4", () => {
           cleanup(audioPath, videoPath, images);
         });
       })
-      .on("error", err => {
+      .on("error", (err) => {
         console.error("FFmpeg error:", err);
         res.status(500).send("Video error");
       })
