@@ -34,7 +34,7 @@ function splitText(text, maxLength = 200) {
   return chunks;
 }
 
-// ================= SSE PROGRESS (FIXED) =================
+// ================= SSE PROGRESS =================
 app.get("/tts-progress", async (req, res) => {
   const text = req.query.text;
   if (!text) return res.end();
@@ -51,7 +51,7 @@ app.get("/tts-progress", async (req, res) => {
   for (let i = 0; i < chunks.length; i++) {
     const percent = Math.round(((i + 1) / chunks.length) * 100);
     res.write(`data: ${percent}\n\n`);
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 150));
   }
 
   res.write(`data: done\n\n`);
@@ -118,13 +118,13 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
   }
 });
 
-// ================= IMAGE =================
+// ================= IMAGE DOWNLOAD =================
 async function downloadImage(prompt, index) {
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
     prompt + " cinematic lighting ultra realistic 4k"
   )}`;
 
-  const imgPath = path.join(__dirname, `img_${index}.jpg`);
+  const imgPath = path.join(__dirname, `img_${Date.now()}_${index}.jpg`);
 
   const res = await axios({
     url,
@@ -136,16 +136,17 @@ async function downloadImage(prompt, index) {
   return imgPath;
 }
 
-// ================= 🎬 VIDEO =================
+// ================= 🎬 CINEMATIC VIDEO =================
 app.post("/cinematic-video", async (req, res) => {
   try {
     const { text } = req.body;
     if (!text) return res.status(400).send("No text");
 
-    const lines = text.split(".").filter(t => t.trim()).slice(0, 3);
+    const lines = text.split(".").filter(t => t.trim()).slice(0, 4);
 
-    const audioPath = path.join(__dirname, "audio.mp3");
-    const videoPath = path.join(__dirname, "video.mp4");
+    const audioPath = path.join(__dirname, `audio_${Date.now()}.mp3`);
+    const videoPath = path.join(__dirname, `video_${Date.now()}.mp4`);
+    const fileListPath = path.join(__dirname, `files_${Date.now()}.txt`);
 
     // 🔊 AUDIO
     const ttsUrl = googleTTS.getAudioUrl(text, { lang: "en" });
@@ -165,13 +166,14 @@ app.post("/cinematic-video", async (req, res) => {
       imageFiles.push(img);
     }
 
-    // 📝 CREATE FILE LIST FOR FFMPEG
-    const fileListPath = path.join(__dirname, "files.txt");
+    // 📝 FILE LIST
     let fileList = "";
-
     imageFiles.forEach(img => {
       fileList += `file '${img}'\nduration 3\n`;
     });
+
+    // last image fix
+    fileList += `file '${imageFiles[imageFiles.length - 1]}'`;
 
     fs.writeFileSync(fileListPath, fileList);
 
@@ -183,13 +185,17 @@ app.post("/cinematic-video", async (req, res) => {
       .videoCodec("libx264")
       .audioCodec("aac")
       .size("720x1280")
-      .outputOptions(["-pix_fmt yuv420p", "-shortest"])
+      .outputOptions([
+        "-pix_fmt yuv420p",
+        "-shortest",
+        "-movflags +faststart"
+      ])
       .on("end", () => {
         res.download(videoPath, "cinematic.mp4", () => {
           cleanup(audioPath, videoPath, imageFiles, fileListPath);
         });
       })
-      .on("error", err => {
+      .on("error", (err) => {
         console.error("FFmpeg error:", err);
         res.status(500).send("Video error");
       })
@@ -203,13 +209,17 @@ app.post("/cinematic-video", async (req, res) => {
 
 // ================= CLEANUP =================
 function cleanup(audio, video, images = [], fileListPath) {
-  if (fs.existsSync(audio)) fs.unlinkSync(audio);
-  if (fs.existsSync(video)) fs.unlinkSync(video);
-  if (fs.existsSync(fileListPath)) fs.unlinkSync(fileListPath);
+  try {
+    if (fs.existsSync(audio)) fs.unlinkSync(audio);
+    if (fs.existsSync(video)) fs.unlinkSync(video);
+    if (fs.existsSync(fileListPath)) fs.unlinkSync(fileListPath);
 
-  images.forEach(img => {
-    if (fs.existsSync(img)) fs.unlinkSync(img);
-  });
+    images.forEach(img => {
+      if (fs.existsSync(img)) fs.unlinkSync(img);
+    });
+  } catch (e) {
+    console.log("Cleanup error:", e);
+  }
 }
 
 // ================= START =================
