@@ -51,7 +51,7 @@ app.get("/tts-progress", async (req, res) => {
   for (let i = 0; i < chunks.length; i++) {
     const percent = Math.round(((i + 1) / chunks.length) * 100);
     res.write(`data: ${percent}\n\n`);
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 150));
   }
 
   res.write(`data: done\n\n`);
@@ -74,14 +74,13 @@ app.post("/tts", async (req, res) => {
       });
 
       const audio = await axios.get(url, {
-        responseType: "arraybuffer"
+        responseType: "arraybuffer",
       });
 
       res.write(audio.data);
     }
 
     res.end();
-
   } catch (err) {
     console.error(err);
     res.status(500).send("TTS Error");
@@ -111,7 +110,6 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
 
     fs.unlinkSync(filePath);
     res.json({ text });
-
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "File error" });
@@ -129,55 +127,54 @@ async function downloadImage(prompt, index) {
   const res = await axios({
     url,
     method: "GET",
-    responseType: "arraybuffer"
+    responseType: "arraybuffer",
   });
 
   fs.writeFileSync(imgPath, res.data);
   return imgPath;
 }
 
-// ================= 🎬 CINEMATIC VIDEO =================
+// ================= CINEMATIC VIDEO =================
 app.post("/cinematic-video", async (req, res) => {
   try {
     const { text } = req.body;
     if (!text) return res.status(400).send("No text");
 
-    const lines = text.split(".").filter(t => t.trim()).slice(0, 4);
+    const lines = text.split(".").filter((t) => t.trim()).slice(0, 4);
 
     const audioPath = path.join(__dirname, `audio_${Date.now()}.mp3`);
     const videoPath = path.join(__dirname, `video_${Date.now()}.mp4`);
     const fileListPath = path.join(__dirname, `files_${Date.now()}.txt`);
 
-    // 🔊 AUDIO
+    // AUDIO
     const ttsUrl = googleTTS.getAudioUrl(text, { lang: "en" });
 
     const audioRes = await axios({
       url: ttsUrl,
       method: "GET",
-      responseType: "arraybuffer"
+      responseType: "arraybuffer",
     });
 
     fs.writeFileSync(audioPath, audioRes.data);
 
-    // 🖼️ IMAGES
+    // IMAGES
     let imageFiles = [];
     for (let i = 0; i < lines.length; i++) {
       const img = await downloadImage(lines[i], i);
       imageFiles.push(img);
     }
 
-    // 📝 FILE LIST
+    // FILE LIST
     let fileList = "";
-    imageFiles.forEach(img => {
+    imageFiles.forEach((img) => {
       fileList += `file '${img}'\nduration 3\n`;
     });
 
-    // last image fix
     fileList += `file '${imageFiles[imageFiles.length - 1]}'`;
 
     fs.writeFileSync(fileListPath, fileList);
 
-    // 🎬 FFMPEG
+    // FFMPEG
     ffmpeg()
       .input(fileListPath)
       .inputOptions(["-f concat", "-safe 0"])
@@ -185,11 +182,7 @@ app.post("/cinematic-video", async (req, res) => {
       .videoCodec("libx264")
       .audioCodec("aac")
       .size("720x1280")
-      .outputOptions([
-        "-pix_fmt yuv420p",
-        "-shortest",
-        "-movflags +faststart"
-      ])
+      .outputOptions(["-pix_fmt yuv420p", "-shortest", "-movflags +faststart"])
       .on("end", () => {
         res.download(videoPath, "cinematic.mp4", () => {
           cleanup(audioPath, videoPath, imageFiles, fileListPath);
@@ -200,10 +193,34 @@ app.post("/cinematic-video", async (req, res) => {
         res.status(500).send("Video error");
       })
       .save(videoPath);
-
   } catch (err) {
     console.error(err);
     res.status(500).send("Server error");
+  }
+});
+
+// ================= IMAGE GENERATION API =================
+app.post("/generate-images", async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: "No text" });
+
+    const lines = text.split(".").filter((t) => t.trim()).slice(0, 4);
+
+    let images = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+        lines[i] + " cinematic lighting ultra realistic 4k"
+      )}`;
+
+      images.push(url);
+    }
+
+    res.json({ images });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Image generation failed" });
   }
 });
 
@@ -214,7 +231,7 @@ function cleanup(audio, video, images = [], fileListPath) {
     if (fs.existsSync(video)) fs.unlinkSync(video);
     if (fs.existsSync(fileListPath)) fs.unlinkSync(fileListPath);
 
-    images.forEach(img => {
+    images.forEach((img) => {
       if (fs.existsSync(img)) fs.unlinkSync(img);
     });
   } catch (e) {
@@ -222,7 +239,7 @@ function cleanup(audio, video, images = [], fileListPath) {
   }
 }
 
-// ================= START =================
+// ================= START SERVER =================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("🔥 Server running on port " + PORT);
