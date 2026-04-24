@@ -7,7 +7,6 @@ const mammoth = require("mammoth");
 const googleTTS = require("google-tts-api");
 const axios = require("axios");
 const fs = require("fs");
-const path = require("path");
 
 // 🧠 OCR
 const Tesseract = require("tesseract.js");
@@ -26,7 +25,7 @@ const upload = multer({ dest: "uploads/" });
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("🚀 Voxify AI Backend Running (OCR + PDF→Audio Enabled)");
+  res.send("🚀 Voxify AI Backend Running (FULL POWER MODE)");
 });
 
 // ================= TEXT SPLIT =================
@@ -38,18 +37,24 @@ function splitText(text, maxLength = 200) {
   return chunks;
 }
 
-// ================= 🌍 OCR FUNCTION (MULTI LANG) =================
+// ================= 🌍 AUTO LANGUAGE DETECT =================
+function detectLang(text) {
+  if (/[\u0900-\u097F]/.test(text)) return "hi";
+  if (/[\u0600-\u06FF]/.test(text)) return "ar";
+  return "en";
+}
+
+// ================= 🧠 OCR FUNCTION =================
 async function extractTextFromScannedPDF(pdfPath) {
-  const options = {
+  const convert = fromPath(pdfPath, {
     density: 120,
     saveFilename: "page",
     savePath: "./converted",
     format: "png",
     width: 1000,
     height: 1400,
-  };
+  });
 
-  const convert = fromPath(pdfPath, options);
   let finalText = "";
 
   for (let i = 1; i <= 5; i++) {
@@ -58,7 +63,7 @@ async function extractTextFromScannedPDF(pdfPath) {
 
       const result = await Tesseract.recognize(
         page.path,
-        "eng+hin+ara+spa+fra+deu", // 🌍 multi language
+        "eng+hin+ara+spa+fra+deu",
         {
           logger: m => console.log("OCR:", m.status),
         }
@@ -67,8 +72,7 @@ async function extractTextFromScannedPDF(pdfPath) {
       finalText += result.data.text + "\n";
 
       fs.unlinkSync(page.path);
-
-    } catch (err) {
+    } catch {
       break;
     }
   }
@@ -76,10 +80,10 @@ async function extractTextFromScannedPDF(pdfPath) {
   return finalText;
 }
 
-// ================= 🎧 TTS =================
-async function generateTTSBuffer(text, lang = "en") {
+// ================= 🔊 TTS BUFFER =================
+async function generateTTSBuffer(text, lang) {
   const chunks = splitText(text);
-  let audioBuffers = [];
+  let buffers = [];
 
   for (const chunk of chunks) {
     const url = googleTTS.getAudioUrl(chunk, {
@@ -91,30 +95,33 @@ async function generateTTSBuffer(text, lang = "en") {
       responseType: "arraybuffer",
     });
 
-    audioBuffers.push(res.data);
+    buffers.push(res.data);
   }
 
-  return Buffer.concat(audioBuffers);
+  return Buffer.concat(buffers);
 }
 
 // ================= 🎧 TTS API =================
 app.post("/tts", async (req, res) => {
   try {
     const { text, lang } = req.body;
+
     if (!text) return res.status(400).send("No text");
 
-    const audioBuffer = await generateTTSBuffer(text, lang);
+    const finalLang = lang || detectLang(text);
+
+    const audio = await generateTTSBuffer(text, finalLang);
 
     res.setHeader("Content-Type", "audio/mpeg");
-    res.send(audioBuffer);
+    res.send(audio);
 
   } catch (err) {
     console.error("TTS ERROR:", err);
-    res.status(500).send("TTS Error");
+    res.status(500).send("TTS failed");
   }
 });
 
-// ================= 📄 FILE UPLOAD (TEXT EXTRACT) =================
+// ================= 📄 FILE → TEXT =================
 app.post("/upload-file", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
@@ -126,7 +133,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
 
     let text = "";
 
-    // ================= PDF =================
+    // ===== PDF =====
     if (type === "application/pdf") {
       try {
         const buffer = fs.readFileSync(filePath);
@@ -135,7 +142,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
         text = data.text;
 
         if (!text || text.trim().length < 30) {
-          console.log("⚠️ Using OCR...");
+          console.log("⚠️ OCR fallback...");
           text = await extractTextFromScannedPDF(filePath);
         }
 
@@ -144,13 +151,13 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
       }
     }
 
-    // ================= WORD =================
+    // ===== WORD =====
     else if (type.includes("word")) {
       const result = await mammoth.extractRawText({ path: filePath });
       text = result.value;
     }
 
-    // ================= TXT =================
+    // ===== TXT =====
     else if (type === "text/plain") {
       text = fs.readFileSync(filePath, "utf-8");
     }
@@ -163,9 +170,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
     fs.unlinkSync(filePath);
 
     if (!text || text.trim().length < 10) {
-      return res.status(400).json({
-        error: "❌ Text extraction failed"
-      });
+      return res.status(400).json({ error: "Text extraction failed" });
     }
 
     res.json({
@@ -186,9 +191,7 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
 // ================= 🔥 PDF → AUDIO DIRECT =================
 app.post("/pdf-to-audio", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).send("No file uploaded");
-    }
+    if (!req.file) return res.status(400).send("No file");
 
     const filePath = req.file.path;
 
@@ -200,7 +203,7 @@ app.post("/pdf-to-audio", upload.single("file"), async (req, res) => {
 
       text = data.text;
 
-      if (!text || text.trim().length < 30) {
+      if (!text || text.length < 30) {
         text = await extractTextFromScannedPDF(filePath);
       }
 
@@ -210,18 +213,20 @@ app.post("/pdf-to-audio", upload.single("file"), async (req, res) => {
 
     fs.unlinkSync(filePath);
 
-    if (!text) {
-      return res.status(400).send("Text extraction failed");
+    if (!text || text.length < 10) {
+      return res.status(400).send("No text extracted");
     }
 
-    const audioBuffer = await generateTTSBuffer(text, "en");
+    const lang = detectLang(text);
+
+    const audio = await generateTTSBuffer(text, lang);
 
     res.setHeader("Content-Type", "audio/mpeg");
-    res.send(audioBuffer);
+    res.send(audio);
 
   } catch (err) {
     console.error(err);
-    res.status(500).send("PDF to audio failed");
+    res.status(500).send("PDF → Audio failed");
   }
 });
 
