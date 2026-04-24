@@ -18,6 +18,11 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
+// ✅ ensure uploads folder exists
+if (!fs.existsSync("uploads")) {
+  fs.mkdirSync("uploads");
+}
+
 const upload = multer({ dest: "uploads/" });
 
 // ================= HOME =================
@@ -82,164 +87,115 @@ app.post("/tts", async (req, res) => {
 
     res.end();
   } catch (err) {
-    console.error(err);
+    console.error("TTS ERROR:", err);
     res.status(500).send("TTS Error");
   }
 });
 
-// ================= FILE UPLOAD =================
+// ================= FILE UPLOAD (🔥 FIXED) =================
 app.post("/upload-file", upload.single("file"), async (req, res) => {
   try {
+    // ✅ FIX 1: check file exists
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
     const filePath = req.file.path;
     const type = req.file.mimetype;
 
+    console.log("📂 File type:", type);
+
     let text = "";
 
+    // ================= PDF =================
     if (type === "application/pdf") {
-      const data = await pdfParse(fs.readFileSync(filePath));
-      text = data.text;
-    } else if (type.includes("word")) {
+      try {
+        const buffer = fs.readFileSync(filePath);
+        const data = await pdfParse(buffer);
+
+        text = data.text;
+
+        // ❌ empty PDF fix
+        if (!text || text.trim().length < 20) {
+          throw new Error("PDF empty or scanned");
+        }
+
+      } catch (err) {
+        fs.unlinkSync(filePath);
+        return res.status(400).json({
+          error: "❌ PDF not supported (maybe scanned)"
+        });
+      }
+    }
+
+    // ================= WORD =================
+    else if (type.includes("word")) {
       const result = await mammoth.extractRawText({ path: filePath });
       text = result.value;
-    } else if (type === "text/plain") {
+    }
+
+    // ================= TXT =================
+    else if (type === "text/plain") {
       text = fs.readFileSync(filePath, "utf-8");
-    } else {
+    }
+
+    // ================= INVALID =================
+    else {
       fs.unlinkSync(filePath);
       return res.status(400).json({ error: "Unsupported file" });
     }
 
+    // cleanup
     fs.unlinkSync(filePath);
-    res.json({ text });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "File error" });
-  }
-});
 
-// ================= IMAGE DOWNLOAD =================
-async function downloadImage(prompt, index) {
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-    prompt + " cinematic lighting ultra realistic 4k"
-  )}`;
+    console.log("✅ Extracted length:", text.length);
 
-  const imgPath = path.join(__dirname, `img_${Date.now()}_${index}.jpg`);
-
-  const res = await axios({
-    url,
-    method: "GET",
-    responseType: "arraybuffer",
-  });
-
-  fs.writeFileSync(imgPath, res.data);
-  return imgPath;
-}
-
-// ================= CINEMATIC VIDEO =================
-app.post("/cinematic-video", async (req, res) => {
-  try {
-    const { text } = req.body;
-    if (!text) return res.status(400).send("No text");
-
-    const lines = text.split(".").filter((t) => t.trim()).slice(0, 4);
-
-    const audioPath = path.join(__dirname, `audio_${Date.now()}.mp3`);
-    const videoPath = path.join(__dirname, `video_${Date.now()}.mp4`);
-    const fileListPath = path.join(__dirname, `files_${Date.now()}.txt`);
-
-    // AUDIO
-    const ttsUrl = googleTTS.getAudioUrl(text, { lang: "en" });
-
-    const audioRes = await axios({
-      url: ttsUrl,
-      method: "GET",
-      responseType: "arraybuffer",
+    res.json({
+      text: text.replace(/\s+/g, " ").trim()
     });
 
-    fs.writeFileSync(audioPath, audioRes.data);
+  } catch (err) {
+    console.error("UPLOAD ERROR:", err);
 
-    // IMAGES
-    let imageFiles = [];
-    for (let i = 0; i < lines.length; i++) {
-      const img = await downloadImage(lines[i], i);
-      imageFiles.push(img);
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
     }
 
-    // FILE LIST
-    let fileList = "";
-    imageFiles.forEach((img) => {
-      fileList += `file '${img}'\nduration 3\n`;
-    });
-
-    fileList += `file '${imageFiles[imageFiles.length - 1]}'`;
-
-    fs.writeFileSync(fileListPath, fileList);
-
-    // FFMPEG
-    ffmpeg()
-      .input(fileListPath)
-      .inputOptions(["-f concat", "-safe 0"])
-      .input(audioPath)
-      .videoCodec("libx264")
-      .audioCodec("aac")
-      .size("720x1280")
-      .outputOptions(["-pix_fmt yuv420p", "-shortest", "-movflags +faststart"])
-      .on("end", () => {
-        res.download(videoPath, "cinematic.mp4", () => {
-          cleanup(audioPath, videoPath, imageFiles, fileListPath);
-        });
-      })
-      .on("error", (err) => {
-        console.error("FFmpeg error:", err);
-        res.status(500).send("Video error");
-      })
-      .save(videoPath);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Server error");
+    res.status(500).json({ error: "File processing failed" });
   }
 });
 
-// ================= IMAGE GENERATION API =================
+// ================= IMAGE GENERATION =================
 app.post("/generate-images", async (req, res) => {
   try {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: "No text" });
 
-    const lines = text.split(".").filter((t) => t.trim()).slice(0, 4);
+    const lines = text.split(".").filter(t => t.trim()).slice(0, 4);
 
-    let images = [];
-
-    for (let i = 0; i < lines.length; i++) {
-      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-        lines[i] + " cinematic lighting ultra realistic 4k"
-      )}`;
-
-      images.push(url);
-    }
+    const images = lines.map(line =>
+      `https://image.pollinations.ai/prompt/${encodeURIComponent(
+        line + " cinematic lighting ultra realistic 4k"
+      )}`
+    );
 
     res.json({ images });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Image generation failed" });
   }
 });
 
-// ================= CLEANUP =================
-function cleanup(audio, video, images = [], fileListPath) {
-  try {
-    if (fs.existsSync(audio)) fs.unlinkSync(audio);
-    if (fs.existsSync(video)) fs.unlinkSync(video);
-    if (fs.existsSync(fileListPath)) fs.unlinkSync(fileListPath);
+// ================= ⚠️ VIDEO (OPTIONAL / HEAVY) =================
+// ❗ Render free pe fail hoga mostly
+app.post("/cinematic-video", async (req, res) => {
+  return res.status(400).json({
+    error: "⚠️ Video generation disabled on free server"
+  });
+});
 
-    images.forEach((img) => {
-      if (fs.existsSync(img)) fs.unlinkSync(img);
-    });
-  } catch (e) {
-    console.log("Cleanup error:", e);
-  }
-}
-
-// ================= START SERVER =================
+// ================= START =================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("🔥 Server running on port " + PORT);
