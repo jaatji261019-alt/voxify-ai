@@ -7,17 +7,20 @@ const mammoth = require("mammoth");
 const googleTTS = require("google-tts-api");
 const axios = require("axios");
 const fs = require("fs");
+const path = require("path");
 
 const Tesseract = require("tesseract.js");
 const { fromPath } = require("pdf2pic");
 
 // ================= CONFIG =================
 const PYTHON_API = "https://voxify-python-api.onrender.com";
+const VIDEO_API = "https://voxify-video-api.onrender.com";
 
 // ================= APP =================
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
+app.use("/uploads", express.static("uploads")); // 🔥 serve files
 
 // ================= FOLDERS =================
 if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
@@ -27,7 +30,7 @@ const upload = multer({ dest: "uploads/" });
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("🚀 Voxify AI Backend Running (ULTRA MODE)");
+  res.send("🚀 Voxify AI Backend Running (ULTRA PRO MAX)");
 });
 
 // ================= TEXT SPLIT =================
@@ -104,7 +107,7 @@ async function generateFallbackTTS(text, lang) {
   return Buffer.concat(buffers);
 }
 
-// ================= 🔊 MAIN TTS =================
+// ================= 🔊 TTS =================
 app.post("/tts", async (req, res) => {
   try {
     const { text, voice, style } = req.body;
@@ -113,7 +116,6 @@ app.post("/tts", async (req, res) => {
 
     const { pitch, rate } = getStyleSettings(style);
 
-    // 🔥 TRY PYTHON API
     try {
       const response = await axios.post(
         `${PYTHON_API}/tts`,
@@ -129,8 +131,8 @@ app.post("/tts", async (req, res) => {
       res.setHeader("Content-Type", "audio/mpeg");
       response.data.pipe(res);
 
-    } catch (err) {
-      console.log("⚠️ Python failed → fallback TTS");
+    } catch {
+      console.log("⚠️ Python failed → fallback");
 
       const lang = detectLang(text);
       const audio = await generateFallbackTTS(text, lang);
@@ -142,6 +144,43 @@ app.post("/tts", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).send("TTS failed");
+  }
+});
+
+// ================= 🎤 AUDIO UPLOAD (IMPORTANT) =================
+app.post("/upload-audio", upload.single("file"), (req, res) => {
+  try {
+    const fileUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
+    res.json({ url: fileUrl });
+  } catch {
+    res.status(500).json({ error: "Upload failed" });
+  }
+});
+
+// ================= 🎬 VIDEO GENERATE =================
+app.post("/generate-video", async (req, res) => {
+  try {
+    const { text, audioUrl } = req.body;
+
+    if (!text || !audioUrl) {
+      return res.status(400).json({ error: "Missing data" });
+    }
+
+    const response = await axios.post(
+      `${VIDEO_API}/cinematic`,
+      {
+        text,
+        audioUrl
+      },
+      { responseType: "stream" }
+    );
+
+    res.setHeader("Content-Type", "video/mp4");
+    response.data.pipe(res);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Video failed");
   }
 });
 
@@ -198,48 +237,6 @@ app.post("/upload-file", upload.single("file"), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "File processing failed" });
-  }
-});
-
-// ================= PDF → AUDIO =================
-app.post("/pdf-to-audio", upload.single("file"), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).send("No file");
-
-    const filePath = req.file.path;
-    let text = "";
-
-    try {
-      const data = await pdfParse(fs.readFileSync(filePath));
-      text = data.text;
-
-      if (!text || text.length < 30) {
-        text = await extractTextFromScannedPDF(filePath);
-      }
-
-    } catch {
-      text = await extractTextFromScannedPDF(filePath);
-    }
-
-    fs.unlinkSync(filePath);
-
-    const response = await axios.post(
-      `${PYTHON_API}/tts`,
-      {
-        text,
-        voice: "en-US-AriaNeural",
-        pitch: "0Hz",
-        rate: "0%"
-      },
-      { responseType: "stream" }
-    );
-
-    res.setHeader("Content-Type", "audio/mpeg");
-    response.data.pipe(res);
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("PDF → Audio failed");
   }
 });
 
