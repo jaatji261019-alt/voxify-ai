@@ -14,33 +14,28 @@ const { fromPath } = require("pdf2pic");
 
 // ================= CONFIG =================
 const PYTHON_API = "https://voxify-python-api.onrender.com";
-const VIDEO_API = "https://voxify-video-api.onrender.com";
+const VIDEO_API = "https://voxify-cinematic-api.onrender.com";
 
 // ================= APP =================
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
-app.use("/uploads", express.static("uploads")); // 🔥 serve files
+app.use("/uploads", express.static("uploads"));
 
 // ================= FOLDERS =================
 if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 if (!fs.existsSync("converted")) fs.mkdirSync("converted");
 
-const upload = multer({ dest: "uploads/" });
+// ================= MULTER =================
+const upload = multer({
+  dest: "uploads/",
+  limits: { fileSize: 20 * 1024 * 1024 } // 20MB limit
+});
 
 // ================= HOME =================
 app.get("/", (req, res) => {
   res.send("🚀 Voxify AI Backend Running (ULTRA PRO MAX)");
 });
-
-// ================= TEXT SPLIT =================
-function splitText(text, maxLength = 200) {
-  let chunks = [];
-  for (let i = 0; i < text.length; i += maxLength) {
-    chunks.push(text.substring(i, i + maxLength));
-  }
-  return chunks;
-}
 
 // ================= LANGUAGE =================
 function detectLang(text) {
@@ -49,7 +44,7 @@ function detectLang(text) {
   return "en";
 }
 
-// ================= VOICE STYLE =================
+// ================= STYLE =================
 function getStyleSettings(style) {
   switch (style) {
     case "deep": return { pitch: "-20Hz", rate: "-10%" };
@@ -95,7 +90,7 @@ async function extractTextFromScannedPDF(pdfPath) {
 
 // ================= FALLBACK TTS =================
 async function generateFallbackTTS(text, lang) {
-  const chunks = splitText(text);
+  const chunks = text.match(/.{1,200}/g) || [];
   let buffers = [];
 
   for (const chunk of chunks) {
@@ -119,20 +114,15 @@ app.post("/tts", async (req, res) => {
     try {
       const response = await axios.post(
         `${PYTHON_API}/tts`,
-        {
-          text,
-          voice: voice || "en-US-AriaNeural",
-          pitch,
-          rate
-        },
-        { responseType: "stream" }
+        { text, voice, pitch, rate },
+        { responseType: "stream", timeout: 60000 }
       );
 
       res.setHeader("Content-Type", "audio/mpeg");
       response.data.pipe(res);
 
-    } catch {
-      console.log("⚠️ Python failed → fallback");
+    } catch (err) {
+      console.log("⚠️ Python TTS failed");
 
       const lang = detectLang(text);
       const audio = await generateFallbackTTS(text, lang);
@@ -147,17 +137,24 @@ app.post("/tts", async (req, res) => {
   }
 });
 
-// ================= 🎤 AUDIO UPLOAD (IMPORTANT) =================
+// ================= 🎤 AUDIO UPLOAD =================
 app.post("/upload-audio", upload.single("file"), (req, res) => {
   try {
     const fileUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
+
+    // 🔥 auto delete after 10 min
+    setTimeout(() => {
+      fs.unlink(req.file.path, () => {});
+    }, 10 * 60 * 1000);
+
     res.json({ url: fileUrl });
+
   } catch {
     res.status(500).json({ error: "Upload failed" });
   }
 });
 
-// ================= 🎬 VIDEO GENERATE =================
+// ================= 🎬 VIDEO =================
 app.post("/generate-video", async (req, res) => {
   try {
     const { text, audioUrl } = req.body;
@@ -168,18 +165,18 @@ app.post("/generate-video", async (req, res) => {
 
     const response = await axios.post(
       `${VIDEO_API}/cinematic`,
+      { text, audioUrl },
       {
-        text,
-        audioUrl
-      },
-      { responseType: "stream" }
+        responseType: "stream",
+        timeout: 120000 // 2 min max
+      }
     );
 
     res.setHeader("Content-Type", "video/mp4");
     response.data.pipe(res);
 
   } catch (err) {
-    console.error(err);
+    console.error("Video Error:", err.message);
     res.status(500).send("Video failed");
   }
 });
