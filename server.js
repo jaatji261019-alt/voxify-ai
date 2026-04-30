@@ -27,7 +27,7 @@ const upload = multer({ dest: "uploads/" });
 
 // ================= HOME =================
 app.get("/", (req, res) => {
-  res.send("🚀 Voxify AI Backend Running (PRO MODE)");
+  res.send("🚀 Voxify AI Backend Running (ULTRA MODE)");
 });
 
 // ================= TEXT SPLIT =================
@@ -39,11 +39,23 @@ function splitText(text, maxLength = 200) {
   return chunks;
 }
 
-// ================= LANGUAGE DETECT =================
+// ================= LANGUAGE =================
 function detectLang(text) {
   if (/[\u0900-\u097F]/.test(text)) return "hi";
   if (/[\u0600-\u06FF]/.test(text)) return "ar";
   return "en";
+}
+
+// ================= VOICE STYLE =================
+function getStyleSettings(style) {
+  switch (style) {
+    case "deep": return { pitch: "-20Hz", rate: "-10%" };
+    case "soft": return { pitch: "+10Hz", rate: "-5%" };
+    case "sad": return { pitch: "-10Hz", rate: "-20%" };
+    case "angry": return { pitch: "+15Hz", rate: "+15%" };
+    case "story": return { pitch: "+5Hz", rate: "-10%" };
+    default: return { pitch: "0Hz", rate: "0%" };
+  }
 }
 
 // ================= OCR =================
@@ -64,7 +76,7 @@ async function extractTextFromScannedPDF(pdfPath) {
 
       const result = await Tesseract.recognize(
         page.path,
-        "eng+hin+ara",
+        "eng+hin+ara"
       );
 
       finalText += result.data.text + "\n";
@@ -95,14 +107,22 @@ async function generateFallbackTTS(text, lang) {
 // ================= 🔊 MAIN TTS =================
 app.post("/tts", async (req, res) => {
   try {
-    const { text, voice } = req.body;
+    const { text, voice, style } = req.body;
+
     if (!text) return res.status(400).send("No text");
 
-    // 🔥 Try Python API first
+    const { pitch, rate } = getStyleSettings(style);
+
+    // 🔥 TRY PYTHON API
     try {
       const response = await axios.post(
         `${PYTHON_API}/tts`,
-        { text, voice: voice || "en-US-AriaNeural" },
+        {
+          text,
+          voice: voice || "en-US-AriaNeural",
+          pitch,
+          rate
+        },
         { responseType: "stream" }
       );
 
@@ -110,7 +130,7 @@ app.post("/tts", async (req, res) => {
       response.data.pipe(res);
 
     } catch (err) {
-      console.log("⚠️ Python TTS failed, using fallback...");
+      console.log("⚠️ Python failed → fallback TTS");
 
       const lang = detectLang(text);
       const audio = await generateFallbackTTS(text, lang);
@@ -205,7 +225,12 @@ app.post("/pdf-to-audio", upload.single("file"), async (req, res) => {
 
     const response = await axios.post(
       `${PYTHON_API}/tts`,
-      { text },
+      {
+        text,
+        voice: "en-US-AriaNeural",
+        pitch: "0Hz",
+        rate: "0%"
+      },
       { responseType: "stream" }
     );
 
